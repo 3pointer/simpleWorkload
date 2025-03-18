@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"context"
 	"database/sql"
 	"flag"
@@ -106,7 +107,6 @@ var (
 	// PadLength returns a random padding length for `remark` field within user
 	// specified bound.
 	baseLen      = [3]int{36, 48, 16}
-	tidbDatabase = true
 )
 
 func init() {
@@ -138,6 +138,7 @@ func RunBank(ctx context.Context, dsn string, runTime time.Duration, cfg Config)
 		err := bclient.ContinueVerify(ctx, dsn)
 		if err != nil {
 			log.Warn("verify failed", zap.Error(err))
+			os.Exit(1)
 		}
 	}()
 
@@ -368,30 +369,11 @@ func (c *Bank2Client) Verify(ctx context.Context, db *sql.DB, sessionParams ...s
 	}
 	defer tx.Rollback()
 
-	// Get TiDB timestamp if using TiDB
-	if tidbDatabase {
-		var tso uint64
-		if err = tx.QueryRow("SELECT @@tidb_current_ts").Scan(&tso); err == nil {
-			log.Info("SELECT SUM(balance) to verify use tso",
-				zap.Any("client", c),
-				zap.Uint64("tso", tso))
-		}
-	}
-
 	// Set isolation read engines if needed
 	_, err = tx.Exec("set @@session.tidb_isolation_read_engines='tikv'")
 	if err != nil {
 		log.Warn("Failed to set isolation read engines", zap.Error(err))
 	}
-
-	// Apply any session parameters
-	for _, param := range sessionParams {
-		if _, err = tx.Exec(param); err != nil {
-			log.Warn("Failed to set session parameter", zap.Error(err))
-			return false, err
-		}
-	}
-
 	var total int64
 	expectTotal := (int64(c.Config.NumAccounts) * initialBalance) * 2
 
