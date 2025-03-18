@@ -14,15 +14,17 @@ import (
 	"github.com/pingcap/log"
 	"github.com/rogpeppe/fastuuid"
 	"go.uber.org/zap"
+
+	_ "github.com/go-sql-driver/mysql"
 )
 
 // Config for bank workload
 type Config struct {
-	NumAccounts         int           
-	Interval            time.Duration 
-	Concurrency         int           
-	RetryLimit          int           
-	Contention          string        
+	NumAccounts         int
+	Interval            time.Duration
+	Concurrency         int
+	RetryLimit          int
+	Contention          string
 	DbName              string
 	TiFlashDataReplicas int
 	MinLength           int
@@ -31,14 +33,14 @@ type Config struct {
 
 // Default configuration
 var defaultConfig = Config{
-	NumAccounts:   1000,
-	Interval:      time.Second * 2,
-	Concurrency:   50,
-	RetryLimit:    10,
-	Contention:    "low",
-	DbName:        "test",
-	MinLength:     0,
-	MaxLength:     1024,
+	NumAccounts: 1000,
+	Interval:    time.Second * 2,
+	Concurrency: 50,
+	RetryLimit:  10,
+	Contention:  "low",
+	DbName:      "test",
+	MinLength:   0,
+	MaxLength:   1024,
 }
 
 // Bank2Client implements the bank workload
@@ -116,7 +118,7 @@ func RunBank(ctx context.Context, dsn string, runTime time.Duration, cfg Config)
 	log.Info("Start bank workload")
 
 	bclient := &Bank2Client{Config: &cfg}
-	
+
 	// Setup phase
 	err := bclient.SetUp(ctx, dsn)
 	if err != nil {
@@ -153,34 +155,34 @@ func (c *Bank2Client) padLength(table int) int {
 	// Default values
 	minLen := 0
 	maxLen := len(remark) / 2 // Use half the remark length as default max
-	
+
 	if table >= 0 && table < 3 {
 		// If MinLength and MaxLength are properly set in config, use them
 		if c.Config.MinLength > 0 && c.Config.MinLength > baseLen[table] {
 			minLen = c.Config.MinLength - baseLen[table]
 		}
-		
+
 		if c.Config.MaxLength > 0 && c.Config.MaxLength < len(remark)+baseLen[table] {
 			maxLen = c.Config.MaxLength - baseLen[table]
 		}
 	}
-	
+
 	// Make sure maxLen is greater than minLen
 	if maxLen <= minLen {
 		maxLen = minLen + 100
 	}
-	
+
 	// Make sure we don't go out of bounds for the remark string
 	if minLen >= len(remark) {
 		return len(remark) - 1
 	}
-	
+
 	// Ensure we don't cause panic with random number generation
 	diff := maxLen - minLen
 	if diff <= 0 {
 		diff = 1
 	}
-	
+
 	return minLen + rand.Intn(diff)
 }
 
@@ -248,7 +250,7 @@ func (c *Bank2Client) SetUp(ctx context.Context, dsn string) error {
 	wg.Wait()
 
 	// Insert system account
-	query := fmt.Sprintf(`INSERT IGNORE INTO bank2_accounts (id, balance, name) VALUES (%d, %d, "system account")`, 
+	query := fmt.Sprintf(`INSERT IGNORE INTO bank2_accounts (id, balance, name) VALUES (%d, %d, "system account")`,
 		systemAccountID, int64(c.Config.NumAccounts*initialBalance))
 	_, err = db.Exec(query)
 	if err != nil && !strings.Contains(err.Error(), "Duplicate entry") {
@@ -263,7 +265,7 @@ func (c *Bank2Client) SetUp(ctx context.Context, dsn string) error {
 	if !ret {
 		return fmt.Errorf("initial balance verification failed")
 	}
-	
+
 	return nil
 }
 
@@ -276,7 +278,7 @@ func (c *Bank2Client) TearDown(ctx context.Context) error {
 func (c *Bank2Client) Start(ctx context.Context, dsn string) error {
 	atomic.StoreInt32(&c.stop, 0)
 	log.Info("Starting bank transfers...")
-	
+
 	db, err := OpenDB(dsn, c.Config.Concurrency)
 	if err != nil {
 		return err
@@ -295,7 +297,7 @@ func (c *Bank2Client) Start(ctx context.Context, dsn string) error {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			
+
 			for {
 				select {
 				case <-ctx.Done():
@@ -304,18 +306,18 @@ func (c *Bank2Client) Start(ctx context.Context, dsn string) error {
 					if atomic.LoadInt32(&c.stop) != 0 {
 						return
 					}
-					
+
 					c.wg.Add(1)
 					c.moveMoney(ctx, db)
 					c.wg.Done()
-					
+
 					// Small delay to prevent CPU overload
 					time.Sleep(time.Millisecond)
 				}
 			}
 		}(i)
 	}
-	
+
 	wg.Wait()
 	return nil
 }
@@ -345,7 +347,7 @@ func (c *Bank2Client) ContinueVerify(ctx context.Context, dsn string) error {
 			if atomic.LoadInt32(&c.stop) != 0 {
 				return nil
 			}
-			
+
 			ok, err := c.Verify(ctx, db)
 			if err != nil {
 				log.Error("Verification error", zap.Error(err))
@@ -399,7 +401,7 @@ func (c *Bank2Client) Verify(ctx context.Context, db *sql.DB, sessionParams ...s
 	if err = tx.QueryRow(query).Scan(&total, &uuid); err != nil {
 		return false, err
 	}
-	
+
 	if total != expectTotal {
 		log.Error("Balance verification failed",
 			zap.Int64("expected", expectTotal),
@@ -409,7 +411,7 @@ func (c *Bank2Client) Verify(ctx context.Context, db *sql.DB, sessionParams ...s
 		c.wg.Wait()
 		return false, nil
 	}
-	
+
 	log.Info("Balance verification passed", zap.Int64("total", total))
 	return true, nil
 }
@@ -423,11 +425,11 @@ func (c *Bank2Client) moveMoney(ctx context.Context, db *sql.DB) {
 			to = systemAccountID
 		}
 	}
-	
+
 	if from == to {
 		return
 	}
-	
+
 	amount := rand.Intn(maxTransfer)
 	if err := c.execTransaction(ctx, db, from, to, amount); err != nil {
 		log.Debug("Transaction failed", zap.Error(err))
@@ -451,7 +453,7 @@ func (c *Bank2Client) execTransaction(ctx context.Context, db *sql.DB, from, to 
 
 	var fromBalance, toBalance int
 	balances := make(map[int]int)
-	
+
 	for rows.Next() {
 		var id, balance int
 		if err := rows.Scan(&id, &balance); err != nil {
@@ -459,19 +461,19 @@ func (c *Bank2Client) execTransaction(ctx context.Context, db *sql.DB, from, to 
 		}
 		balances[id] = balance
 	}
-	
+
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	
+
 	// Check if we found both accounts
 	if len(balances) != 2 {
 		return fmt.Errorf("expected 2 accounts, got %d", len(balances))
 	}
-	
+
 	fromBalance = balances[from]
 	toBalance = balances[to]
-	
+
 	// Check sufficient funds
 	if fromBalance < amount {
 		return nil // Insufficient funds, not an error
@@ -479,7 +481,7 @@ func (c *Bank2Client) execTransaction(ctx context.Context, db *sql.DB, from, to 
 
 	// Update balances
 	txnID := atomic.AddInt32(&c.txnID, 1)
-	
+
 	// Record transaction with remark
 	remarkPad1 := ""
 	if len(remark) > 0 {
@@ -490,13 +492,13 @@ func (c *Bank2Client) execTransaction(ctx context.Context, db *sql.DB, from, to 
 			remarkPad1 = remark
 		}
 	}
-	
+
 	if _, err := tx.Exec(
 		"INSERT INTO bank2_transaction (id, txn_ref, remark) VALUES (?, ?, ?)",
 		txnID, fmt.Sprintf("txn_%d", txnID), remarkPad1); err != nil {
 		return err
 	}
-	
+
 	// Get remark for transaction legs
 	remarkPad2 := ""
 	if len(remark) > 0 {
@@ -507,28 +509,28 @@ func (c *Bank2Client) execTransaction(ctx context.Context, db *sql.DB, from, to 
 			remarkPad2 = remark
 		}
 	}
-	
+
 	// Record from leg
 	if _, err := tx.Exec(
 		"INSERT INTO bank2_transaction_leg (account_id, amount, running_balance, txn_id, remark) VALUES (?, ?, ?, ?, ?)",
 		from, -amount, fromBalance-amount, txnID, remarkPad2); err != nil {
 		return err
 	}
-	
+
 	// Record to leg
 	if _, err := tx.Exec(
 		"INSERT INTO bank2_transaction_leg (account_id, amount, running_balance, txn_id, remark) VALUES (?, ?, ?, ?, ?)",
 		to, amount, toBalance+amount, txnID, remarkPad2); err != nil {
 		return err
 	}
-	
+
 	// Update accounts
 	if _, err := tx.Exec(
 		"UPDATE bank2_accounts SET balance = ? WHERE id = ?",
 		fromBalance-amount, from); err != nil {
 		return err
 	}
-	
+
 	if _, err := tx.Exec(
 		"UPDATE bank2_accounts SET balance = ? WHERE id = ?",
 		toBalance+amount, to); err != nil {
